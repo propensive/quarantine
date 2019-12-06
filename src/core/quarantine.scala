@@ -6,13 +6,6 @@ import scala.concurrent._
 import scala.util._, control._
 import scala.annotation.unchecked.{uncheckedVariance => uv}
 
-sealed trait !!!
-sealed trait ![E <: Throwable] extends !!!
-
-sealed trait Result[-E <: !!!, +T] extends Product with Serializable
-case class Answer[T](value: T) extends Result[!!!, T]
-case class Failed[E <: Throwable](error: E) extends Result[![E], Nothing]
-
 object boxing {
   implicit object id extends Box {
     type Wrap[+E <: Throwable, +T] = T
@@ -31,12 +24,6 @@ object boxing {
     def fail[E <: Throwable](error: => E): Wrap[E, Nothing] = Left(error)
     def succeed[T](value: => T): Wrap[Nothing, T] = Right(value)
   }
- 
-  implicit object result extends Box {
-    type Wrap[+E <: Throwable, +T] = Result[![E @uv], T]
-    def fail[E <: Throwable](error: => E): Wrap[E, Nothing] = Failed(error)
-    def succeed[T](value: => T): Wrap[Nothing, T] = Answer(value)
-  }
 }
 
 object Box {
@@ -51,29 +38,55 @@ object Box {
   def fromTry[E <: Throwable, T](`try`: => Try[T])(implicit box: Box): box.Wrap[Throwable, T] =
     if(`try`.isSuccess) box.succeed(`try`.get) else box.fail(`try`.failed.get)
 
-  def fromOption[E <: Throwable, T](option: => Option[T])(implicit box: Box): box.Wrap[Throwable, T] =
-    option match {
-      case None => box.fail(new NoSuchElementException())
-      case Some(v) => box.succeed[T](v)
+  object From1 {
+    implicit object `try` extends From1[Try] {
+      def convert[T](boxed: => Try[T], box: Box): box.Wrap[Throwable, T] =
+        if(boxed.isSuccess) box.succeed(boxed.get) else box.fail(boxed.failed.get)
     }
-
-  def fromEither[E <: Throwable, T](either: => Either[E, T])(implicit box: Box): box.Wrap[E, T] = either match {
-    case Left(left) => box.fail[E](left)
-    case Right(right) => box.succeed[T](right)
+   
+    implicit object option extends From1[Option] {
+      def convert[T](boxed: => Option[T], box: Box): box.Wrap[Throwable, T] =
+        if(boxed.isDefined) box.succeed(boxed.get) else box.fail(new NoSuchElementException("None.get"))
+    }
   }
+
+  object From2 {
+    implicit object either extends From2[Either] {
+      def convert[E <: Throwable, T](boxed: => Either[E, T], box: Box): box.Wrap[E, T] =
+        if(boxed.isLeft) box.fail(boxed.left.get) else box.succeed(boxed.right.get)
+    }
+  }
+
+  trait From1[Boxed[_]] {
+    def convert[T](boxed: => Boxed[T], box: Box): box.Wrap[Throwable, T]
+  }
+
+  trait From2[Boxed[+_ <: Throwable, _]] {
+    def convert[E <: Throwable, T](boxed: => Boxed[E, T], box: Box): box.Wrap[E, T]
+  }
+
+  def from[F[+_]: From1, T](value: => F[T])(implicit box: Box): box.Wrap[Throwable, T] =
+    implicitly[From1[F]].convert(value, box)
+
+  def from[F[+_ <: Throwable, +_]: From2, E <: Throwable, T](value: => F[E, T])(implicit box: Box): box.Wrap[E, T] =
+    implicitly[From2[F]].convert(value, box)
 }
 
 trait Box {
   type Wrap[+_ <: Throwable, +_]
+  
   def fail[E <: Throwable](error: => E): Wrap[E, Nothing]
   def succeed[T](value: => T): Wrap[Nothing, T]
-
+  
   def nonFatal[T](value: => T): Wrap[Throwable, T] = try succeed[T](value) catch { case NonFatal(e) => fail(e) }
 
-  def capture[E <: Throwable: scala.reflect.ClassTag, T](value: T) =
+  def capture[E <: Throwable: scala.reflect.ClassTag, T](value: => T) =
     try succeed[T](value) catch { case e: E => fail(e) }
 
-  def recapture[E <: Throwable: scala.reflect.ClassTag, E2 <: Throwable, T](value: T)(fn: E => E2): Wrap[E2, T] =
-    try succeed[T](value) catch { case e: E => fail(fn(e)) }
+  def adapt[E <: Throwable: scala.reflect.ClassTag, E2 <: Throwable, T]
+      (value: => T)
+      (adaptation: E => E2)
+      : Wrap[E2, T] =
+    try succeed[T](value) catch { case e: E => fail(adaptation(e)) }
 }
 
