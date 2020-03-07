@@ -24,7 +24,15 @@ import language.existentials
 import language.higherKinds
 import language.implicitConversions
 
-abstract class Exceptions[ExcType <: Exception: ClassTag] {
+object `package` {
+  implicit def toCatch[T](fn: => T): Catch[T] = new Catch[T](() => fn)
+}
+
+class Catch[T](val fn: () => T) extends AnyVal {
+  def check[T1 >: T](pf: PartialFunction[Throwable, T1]): T1 = try fn() catch pf
+}
+
+abstract class Domain[ExcType <: Exception: ClassTag] {
 
   type ExceptionType = ExcType
 
@@ -86,7 +94,7 @@ abstract class Exceptions[ExcType <: Exception: ClassTag] {
   }
 
   sealed trait Unsurprising[+T] {
-    def adapt[Domain <: Exceptions[_]](implicit domain: Domain, mitigator: Mitigator[Domain]): Domain#Result[T]
+    def adapt[D <: Domain[_]](implicit domain: D, mitigator: Mitigator[D]): D#Result[T]
     def recover[T1 >: T](fn: ExceptionType => T1): T1
   }
   
@@ -110,22 +118,19 @@ abstract class Exceptions[ExcType <: Exception: ClassTag] {
     def map[U](fn: T => U): Result[U] = flatMap[U](fn.andThen(Result(_)))
     def to[F[+_]: Result.To]: F[T] = implicitly[Result.To[F]].convert(result)
 
-    def adapt[Domain <: Exceptions[_]]
-             (implicit domain: Domain, mitigator: Mitigator[Domain])
-             : Domain#Result[T] = result match {
+    def adapt[D <: Domain[_]](implicit domain: D, mitigator: Mitigator[D]): D#Result[T] = result match {
       case Answer(value) => domain.Answer(value)
       case Error(error)  => mitigator.handle(error)
       case Surprise(exception) => mitigator.anticipate(exception)
     }
 
-    def mitigate[E](fn: ExceptionType => E)(implicit domain: Exceptions[_ >: E]): domain.Result[T] =
-      result match {
-        case Answer(value) => domain.Answer(value)
-        case Error(error)  => domain.Error(fn(error) match { case e: domain.ExceptionType => e })
-        case Surprise(exception) => domain.Surprise(exception)
-      }
+    def mitigate[E](fn: ExceptionType => E)(implicit domain: Domain[_ >: E]): domain.Result[T] = result match {
+      case Answer(value) => domain.Answer(value)
+      case Error(error)  => domain.Error(fn(error) match { case e: domain.ExceptionType => e })
+      case Surprise(exception) => domain.Surprise(exception)
+    }
 
-    def recover[T1 >: T](fn: ExceptionType => T1): T1 = result match {
+    def recover[S >: T](fn: ExceptionType => S): S = result match {
       case Answer(value) => value
       case Error(error) => fn(error)
       case Surprise(error) => throw error
@@ -137,7 +142,7 @@ abstract class Exceptions[ExcType <: Exception: ClassTag] {
       case Surprise(error) => Error(fn(error))
     }
 
-    def apprehend[E](fn: PartialFunction[ExceptionType, E])(implicit domain: Exceptions[_ >: E]): domain.Result[T] =
+    def apprehend[E](fn: PartialFunction[ExceptionType, E])(implicit domain: Domain[_ >: E]): domain.Result[T] =
       result match {
         case Answer(value) => domain.Answer(value)
         case Error(error) => if(fn.isDefinedAt(error)) domain.Error(fn(error)) else domain.Surprise(error)
@@ -161,12 +166,12 @@ abstract class Exceptions[ExcType <: Exception: ClassTag] {
     def throwable: Throwable = error
   }
 
-  trait Mitigator[Domain2 <: Exceptions[_]] {
-    def handle[T](exception: ExceptionType): Domain2#Result[T]
-    def anticipate[T](throwable: Throwable): Domain2#Result[T]
+  trait Mitigator[D <: Domain[_]] {
+    def handle[T](exception: ExceptionType): D#Result[T]
+    def anticipate[T](throwable: Throwable): D#Result[T]
   }
 
-  def mitigate[S <: Exception](domain: Exceptions[S])
+  def mitigate[S <: Exception](domain: Domain[S])
                               (handler: ExceptionType => domain.ExceptionType)
                               : Mitigator[domain.type] = new Mitigator[domain.type] {
     def anticipate[T](throwable: Throwable): domain.Surprise = domain.Surprise(throwable)
