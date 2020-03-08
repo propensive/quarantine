@@ -136,7 +136,7 @@ abstract class Domain[ExcType <: Exception: ClassTag] {
       case Surprise(error) => throw error
     }
 
-    def extenuate(fn: Throwable => ExceptionType): Unsurprising[T] = result match {
+    def extenuate(fn: Throwable => ExceptionType): Result[T] = result match {
       case Answer(value) => Answer(value)
       case Error(error) => Error(error)
       case Surprise(error) => Error(fn(error))
