@@ -105,53 +105,65 @@ abstract class Domain[ExcType <: Exception: ClassTag] {
       case Surprise(error) => Some(Surprise(error))
     }
   }
-  
+
   sealed trait Erroneous { def throwable: Throwable }
 
   sealed abstract class Result[+T](protected val either: Either[Throwable, T]) { result =>
     def flatMap[U](fn: T => Result[U]): Result[U] = either.flatMap(fn(_).either) match {
       case Left(error: ExceptionType) => Error(error)
-      case Left(error) => Surprise(error)
-      case Right(value) => Answer(value)
+      case Left(error)                => Surprise(error)
+      case Right(value)               => Answer(value)
     }
     
     def map[U](fn: T => U): Result[U] = flatMap[U](fn.andThen(Result(_)))
     def to[F[+_]: Result.To]: F[T] = implicitly[Result.To[F]].convert(result)
 
     def adapt[D <: Domain[_]](implicit domain: D, mitigator: Mitigator[D]): D#Result[T] = result match {
-      case Answer(value) => domain.Answer(value)
-      case Error(error)  => mitigator.handle(error)
+      case Answer(value)       => domain.Answer(value)
+      case Error(error)        => mitigator.handle(error)
       case Surprise(exception) => mitigator.anticipate(exception)
     }
 
     def mitigate[E](fn: ExceptionType => E)(implicit domain: Domain[_ >: E]): domain.Result[T] = result match {
-      case Answer(value) => domain.Answer(value)
-      case Error(error)  => domain.Error(fn(error) match { case e: domain.ExceptionType => e })
+      case Answer(value)       => domain.Answer(value)
+      case Error(error)        => domain.Error(fn(error) match { case e: domain.ExceptionType => e })
+      case Surprise(exception) => domain.Surprise(exception)
+    }
+
+    def prescribe[E](error: E)(implicit domain: Domain[_ >: E]): domain.Result[T] = result match {
+      case Answer(value)       => domain.Answer(value)
+      case Error(_)            => domain.Error(error)
       case Surprise(exception) => domain.Surprise(exception)
     }
 
     def recover[S >: T](fn: ExceptionType => S): S = result match {
-      case Answer(value) => value
-      case Error(error) => fn(error)
+      case Answer(value)   => value
+      case Error(error)    => fn(error)
       case Surprise(error) => throw error
     }
 
     def extenuate(fn: Throwable => ExceptionType): Result[T] = result match {
-      case Answer(value) => Answer(value)
-      case Error(error) => Error(error)
+      case Answer(value)   => Answer(value)
+      case Error(error)    => Error(error)
       case Surprise(error) => Error(fn(error))
     }
 
     def apprehend[E](fn: PartialFunction[ExceptionType, E])(implicit domain: Domain[_ >: E]): domain.Result[T] =
       result match {
-        case Answer(value) => domain.Answer(value)
-        case Error(error) => if(fn.isDefinedAt(error)) domain.Error(fn(error)) else domain.Surprise(error)
-        case Surprise(exception) => domain.Surprise(exception)
+        case Answer(value)   => domain.Answer(value)
+        case Error(error)    => if(fn.isDefinedAt(error)) domain.Error(fn(error)) else domain.Surprise(error)
+        case Surprise(error) => domain.Surprise(error)
       }
 
     def pacify[T1 >: T](default: T1): T1 = result match {
       case Answer(value) => value
       case _             => default
+    }
+
+    def assume(implicit domain: Domain[_]): domain.Result[T] = result match {
+      case Answer(value)   => domain.Answer(value)
+      case Error(error)    => domain.Surprise(error)
+      case Surprise(error) => domain.Surprise(error)
     }
   }
 
