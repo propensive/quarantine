@@ -116,6 +116,7 @@ abstract class Domain[ExcType <: Exception: ClassTag] {
     }
     
     def map[U](fn: T => U): Result[U] = flatMap[U](fn.andThen(Result(_)))
+    def foreach(fn: T => Unit): Unit = map(fn)
     def to[F[+_]: Result.To]: F[T] = implicitly[Result.To[F]].convert(result)
 
     def adapt[D <: Domain[_]](implicit domain: D, mitigator: Mitigator[D]): D#Result[T] = result match {
