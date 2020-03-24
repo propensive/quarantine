@@ -137,6 +137,12 @@ abstract class Domain[ExcType <: Exception: ClassTag] {
       case Surprise(exception) => domain.Surprise(exception)
     }
 
+    def mollify[E](error: E)(implicit domain: Domain[_ >: E]): domain.Result[T] = result match {
+      case Answer(value) => domain.Answer(value)
+      case Error(_)      => domain.Error(error)
+      case Surprise(_)   => domain.Error(error)
+    }
+
     def recover[S >: T](fn: ExceptionType => S): S = result match {
       case Answer(value)   => value
       case Error(error)    => fn(error)
