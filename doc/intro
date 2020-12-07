@@ -1,0 +1,2 @@
+Quarantine is a small library to make it easy to handle exceptions _safely_ and _exhaustively_, in particular
+when combining modules which may throw different exception types.
