@@ -176,8 +176,7 @@ abstract class Domain[ExcType <: Exception: ClassTag] {
 
   case class Answer[+T](value: T) extends Result[T](Right(value)) with Unsurprising[T]
   
-  case class Error(error: ExceptionType) extends Result[Nothing](Left(error)) with Unsurprising[Nothing] with
-      Erroneous {
+  case class Error(error: ExceptionType) extends Result[Nothing](Left(error)) with Unsurprising[Nothing] with Erroneous {
     def throwable: Throwable = error
   }
   
